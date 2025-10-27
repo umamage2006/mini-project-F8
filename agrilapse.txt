@@ -1,0 +1,146 @@
+import streamlit as st
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+from PIL import Image
+from sklearn.linear_model import LinearRegression
+import imageio
+
+# ------------------ Green Segmentation ------------------
+def segment_green(image):
+    """Segment green regions from image."""
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    lower_green = np.array([25, 40, 40])
+    upper_green = np.array([85, 255, 255])
+    mask = cv2.inRange(hsv, lower_green, upper_green)
+    return mask
+
+# ------------------ Dummy AI Stress/Disease Detection ------------------
+def detect_stress_disease(image):
+    avg_color = image.mean(axis=0).mean(axis=0)
+    green, red, blue = avg_color[1], avg_color[2], avg_color[0]
+
+    if green < 80:
+        return "Nutrient Deficiency 🌿", 0.85
+    elif red > 120:
+        return "Leaf Stress / Heat Damage 🔥", 0.78
+    elif blue > 120:
+        return "Possible Fungal Infection 🍄", 0.65
+    else:
+        return "Healthy ✅", 0.92
+
+# ------------------ Time-Lapse Generator ------------------
+def create_timelapse(images, filename="plant_growth.gif", size=(600, 600)):
+    images_fixed = []
+    for img in images:
+        if isinstance(img, Image.Image):
+            img = np.array(img)
+
+        h, w = img.shape[:2]
+        scale = min(size[0] / w, size[1] / h)
+        new_w, new_h = int(w * scale), int(h * scale)
+        resized = cv2.resize(img, (new_w, new_h))
+
+        # Pad to fixed size
+        top = (size[1] - new_h) // 2
+        bottom = size[1] - new_h - top
+        left = (size[0] - new_w) // 2
+        right = size[0] - new_w - left
+        padded = cv2.copyMakeBorder(
+            resized, top, bottom, left, right,
+            borderType=cv2.BORDER_CONSTANT, value=[0, 0, 0]
+        )
+        images_fixed.append(padded)
+
+    imageio.mimsave(filename, images_fixed, duration=0.8, loop=0)
+    return filename
+
+# ------------------ Streamlit UI ------------------
+st.title("🌿 Smart Plant Doctor (AI-Powered)")
+
+uploaded_files = st.file_uploader(
+    "Upload plant images (day-wise)", 
+    accept_multiple_files=True, 
+    type=["jpg", "png", "jpeg"]
+)
+
+if uploaded_files:
+    areas = []
+    days = list(range(1, len(uploaded_files) + 1))
+    timelapse_images = []
+    health_reports = []
+
+    st.subheader("Segmented Plant Images + AI Stress/Disease Detection")
+
+    for i, file in enumerate(uploaded_files, start=1):
+        file_bytes = np.asarray(bytearray(file.read()), dtype=np.uint8)
+        img = cv2.imdecode(file_bytes, 1)
+        mask = segment_green(img)
+        segmented = cv2.bitwise_and(img, img, mask=mask)
+        area = cv2.countNonZero(mask)
+        areas.append(area)
+
+        # AI Stress/Disease Detection
+        label, conf = detect_stress_disease(segmented)
+        health_reports.append((label, conf))
+
+        rgb_img = cv2.cvtColor(segmented, cv2.COLOR_BGR2RGB)
+        timelapse_images.append(rgb_img)
+
+        st.image(
+            rgb_img, 
+            caption=f"Day {i} - Area: {area}, Health: {label} ({conf:.2f})"
+        )
+
+    # ------------------ Growth Analysis ------------------
+    growth_rates = [
+        (areas[i] - areas[i - 1]) / areas[i - 1] * 100 if areas[i - 1] != 0 else 0
+        for i in range(1, len(areas))
+    ]
+    overall_growth = (
+        (areas[-1] - areas[0]) / areas[0] * 100 if areas[0] != 0 else 0
+    )
+
+    st.subheader("📊 Growth Trend")
+    fig, ax = plt.subplots()
+    ax.plot(days, areas, marker='o', color='green', label="Observed Plant Area")
+    ax.set_xlabel("Day")
+    ax.set_ylabel("Area (pixels)")
+    ax.set_title("Plant Growth Over Time")
+    ax.legend()
+    ax.grid()
+    st.pyplot(fig)
+
+    st.subheader("📈 Growth Analysis")
+    for i, rate in enumerate(growth_rates, start=2):
+        st.write(f"Growth from Day {i-1} → Day {i}: **{rate:.2f}%**")
+    st.write(f"**Overall Growth: {overall_growth:.2f}%**")
+
+    # ------------------ AI Growth Prediction ------------------
+    st.subheader("🤖 AI-Powered Growth Prediction")
+    X = np.array(days).reshape(-1, 1)
+    y = np.array(areas)
+    model_reg = LinearRegression()
+    model_reg.fit(X, y)
+    future_days = np.array(range(1, len(days) + 6)).reshape(-1, 1)
+    future_pred = model_reg.predict(future_days)
+
+    fig_pred, ax_pred = plt.subplots()
+    ax_pred.plot(days, areas, 'o-', color="green", label="Observed")
+    ax_pred.plot(future_days, future_pred, '--', color="blue", label="Predicted")
+    ax_pred.set_xlabel("Day")
+    ax_pred.set_ylabel("Area (pixels)")
+    ax_pred.set_title("Observed vs Predicted Plant Growth")
+    ax_pred.legend()
+    ax_pred.grid()
+    st.pyplot(fig_pred)
+
+    st.write("Predicted future growth (next 5 days):")
+    for i in range(len(days) + 1, len(days) + 6):
+        st.write(f"Day {i}: **{int(future_pred[i - 1])} pixels**")
+
+    # ------------------ Time-Lapse Generator ------------------
+    st.subheader("🎥 Growth Time-Lapse")
+    gif_path = create_timelapse(timelapse_images)
+    st.image(gif_path, caption="Plant Growth Time-Lapse")
+
